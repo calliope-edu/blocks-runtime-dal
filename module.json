@@ -1,0 +1,11 @@
+{
+  "name": "blocks-runtime-dal",
+  "version": "1.0.0",
+  "description": "Calliope Blocks editor on-device runtime for mini 1/2 (nRF51/DAL). MbitMore BLE + USB-CDC proxy driven by scratch-vm. DAL equivalent of the codal blocks-runtime (mini 3).",
+  "license": "MIT",
+  "dependencies": {
+    "microbit": "calliope-mini/microbit#v2.2.0-rc6-calliope.rc4"
+  },
+  "targetDependencies": {},
+  "bin": "./source"
+}
