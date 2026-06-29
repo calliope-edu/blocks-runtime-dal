@@ -27,19 +27,25 @@ void startBlocksSerialUpdating() {
  * @return uint8_t Data read from RX
  */
 uint8_t readSync() {
-  // Drain the RX buffer as fast as it fills: yield to other fibers (the
-  // broadcaster + event-notify handlers) ONLY while no byte is buffered, then
-  // read buffered bytes back-to-back with no per-byte sleep.
+  // Read one byte with minimal latency:
+  //  - Fast path: a byte is already buffered → read it immediately (ASYNC), so a
+  //    fully-buffered frame drains back-to-back with no sleeping.
+  //  - Slow path: buffer empty → block on the RX event (SYNC_SLEEP). The runtime
+  //    parks the fiber and wakes it the instant the next byte is stored, so other
+  //    fibers (broadcaster + event-notify handlers) still run meanwhile.
   //
-  // The old code slept 1ms before EVERY byte (~22ms to read one command frame),
-  // so event-triggered command bursts (e.g. "on button → show image" = two
-  // display writes) outran the reader and overflowed the 254-byte RX buffer →
-  // dropped / corrupted commands under load. A manual block click sends a single
-  // command into an idle line, which is why those were never lost.
-  while (uBit.serial.rxBufferedSize() <= 0) {
-    fiber_sleep(1);
+  // This replaces a `while (rxBufferedSize() <= 0) fiber_sleep(1);` spin that
+  // added up to a full scheduler tick of latency before the first byte of each
+  // command frame was even looked at — the dominant inbound USB-command lag. The
+  // overflow problem the spin once guarded against doesn't recur: buffered bytes
+  // are still consumed flat-out, the empty-wait is just event-driven now.
+  //
+  // NOTE: on v1/DAL this whole file is compiled out (BLOCKS_USE_SERIAL == 0, see
+  // BlocksCommon.h) — kept identical to the codal tree for source parity.
+  if (uBit.serial.rxBufferedSize() > 0) {
+    return uBit.serial.read(ASYNC); // present → returns without sleeping
   }
-  return uBit.serial.read(SYNC_SLEEP); // a byte is present → returns immediately
+  return uBit.serial.read(SYNC_SLEEP); // empty → event-driven wait for a byte
 }
 
 /**
