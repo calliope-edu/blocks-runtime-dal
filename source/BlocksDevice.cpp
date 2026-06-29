@@ -99,10 +99,14 @@ BlocksDevice::BlocksDevice(MicroBit &_uBit) : uBit(_uBit) {
   // Reset compass
 
   if (!uBit.compass.isCalibrated()) {
+    // Install an identity calibration so the device skips the interactive
+    // tilt-to-calibrate ritual on boot. scale MUST be the 1024 unity scale, NOT
+    // 1: CALIBRATED_SAMPLE multiplies the raw axis by scale then >>10, so
+    // scale=1 collapses every heading/tilt reading to ~0 (garbage compass).
     CompassCalibration dummyCalibration;
-    dummyCalibration.centre = Sample3D(0, 0, 0);  // Assuming the centre is at (0, 0, 0)
-    dummyCalibration.scale = Sample3D(1, 1, 1);    // Assuming no scaling
-    dummyCalibration.radius = 100;                 // Assuming a radius of 100
+    dummyCalibration.centre = Sample3D(0, 0, 0);
+    dummyCalibration.scale = Sample3D(1024, 1024, 1024);
+    dummyCalibration.radius = 100;
     uBit.compass.setCalibration(dummyCalibration);
   }
   

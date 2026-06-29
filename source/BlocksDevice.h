@@ -130,13 +130,13 @@ public:
    * @brief BLE service for basic micro:bit extension.
    *
    */
-  BlocksService *basicService;
+  BlocksService *basicService = nullptr;
 
   /**
    * @brief BLE service for Microbit More extension.
    *
    */
-  BlocksService *moreService;
+  BlocksService *moreService = nullptr;
 
 #if BLOCKS_USE_SERIAL
   /**
@@ -158,7 +158,15 @@ public:
    * @brief Index of controllabel GPIO pins.
    * 
    */
+#if MICROBIT_CODAL
   int gpioPin[11] = {0, 1, 2, 3, 8, 12, 13, 14, 15, 16, 17};
+#else // NOT MICROBIT_CODAL
+  // On nRF51/DAL `uBit.io.pin[17]` aliases P19 (an internal I2C/SCL line), not a
+  // P17 edge pad — the mini 1/2 MicroBitIO has no P17/P18 member. Drop 17 so the
+  // per-tick digital scan and pin commands never read/drive P19. Restores the
+  // pre-rewrite MbitMore gpioPin set for mini 1/2.
+  int gpioPin[10] = {0, 1, 2, 3, 8, 12, 13, 14, 15, 16};
+#endif // NOT MICROBIT_CODAL
 
   /**
    * @brief Pins which is pull-up at connected.
@@ -224,7 +232,11 @@ public:
   /**
    * Samples of Light Level.
    */
-  int analogInSamples[3][ANALOG_IN_SAMPLES_SIZE] = {{0}};
+  // One median-filter sample row per analog pin P0..P3. MUST be 4 rows: the
+  // ANALOG_IN round-robin samples index 0..3 (updateAnalogIn(buf, 3) indexes
+  // analogInSamples[3]); sizing this [3] was an out-of-bounds write + in-place
+  // median sort that clobbered the following members (blocksProtocol/pullMode).
+  int analogInSamples[4][ANALOG_IN_SAMPLES_SIZE] = {{0}};
 
 #if MICROBIT_CODAL
   /**
