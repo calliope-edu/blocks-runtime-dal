@@ -1,25 +1,25 @@
-#ifndef MBIT_MORE_DEVICE_H
-#define MBIT_MORE_DEVICE_H
+#ifndef BLOCKS_DEVICE_H
+#define BLOCKS_DEVICE_H
 
-#include "pxt.h"
+#include "PxtShim.h"
 
 #include "MicroBit.h"
 #include "MicroBitConfig.h"
 
-#include "MbitMoreCommon.h"
+#include "BlocksCommon.h"
 
-#if MBIT_MORE_USE_SERIAL
-#include "MbitMoreSerial.h"
-class MbitMoreSerial;
-#endif // MBIT_MORE_USE_SERIAL
+#if BLOCKS_USE_SERIAL
+#include "BlocksSerial.h"
+class BlocksSerial;
+#endif // BLOCKS_USE_SERIAL
 
 #if MICROBIT_CODAL
-#include "MbitMoreService.h"
-class MbitMoreService;
+#include "BlocksService.h"
+class BlocksService;
 #else // MICROBIT_CODAL
-#include "MbitMoreServiceDAL.h"
-class MbitMoreServiceDAL;
-using MbitMoreService = MbitMoreServiceDAL;
+#include "BlocksServiceDAL.h"
+class BlocksServiceDAL;
+using BlocksService = BlocksServiceDAL;
 #endif // NOT MICROBIT_CODAL
 
 #if MICROBIT_CODAL
@@ -31,17 +31,17 @@ using MbitMoreService = MbitMoreServiceDAL;
 #endif // NOT MICROBIT_CODAL
 
 #if MICROBIT_CODAL
-#define MBIT_MORE_WAITING_DATA_LABELS_LENGTH 16
-#define MBIT_MORE_WAITING_DATA_LABEL_NOT_FOUND 0xff
-#define MBIT_MORE_DATA_LABEL_SIZE 8
-#define MBIT_MORE_DATA_CONTENT_SIZE 11
+#define BLOCKS_WAITING_DATA_LABELS_LENGTH 16
+#define BLOCKS_WAITING_DATA_LABEL_NOT_FOUND 0xff
+#define BLOCKS_DATA_LABEL_SIZE 8
+#define BLOCKS_DATA_CONTENT_SIZE 11
 #endif // MICROBIT_CODAL
 
 /**
- * @brief Button ID in MicrobitMore
+ * @brief Button ID in Blocks
  * This number is used to memory offset in state data.
  */
-enum MbitMoreButtonStateIndex
+enum BlocksButtonStateIndex
 {
   // GPIO array using [0..20]
   P0 = 24,
@@ -57,7 +57,7 @@ enum MbitMoreButtonStateIndex
  * @brief Version of this micro:bit
  * 
  */
-enum MbitMoreHardwareVersion
+enum BlocksHardwareVersion
 {
   MICROBIT_V1 = 1,
   MICROBIT_V2 = 2,
@@ -65,46 +65,58 @@ enum MbitMoreHardwareVersion
 
 /**
  * @brief Version of protocol to use
- * 
+ *
  */
-enum MbitMoreProtocol
+enum BlocksProtocol
 {
-  MBIT_MORE_V2 = 2,
+  BLOCKS_V2 = 2,
 };
+
+/**
+ * @brief Monotonic blocks-runtime (hex) version.
+ *
+ * Reported on connect in the COMMAND (0x0100) response at byte [3] over both
+ * BLE and serial. Bump +1 on any editor-visible runtime change so the editor
+ * can detect an outdated hex on the device and offer a re-flash. Keep in
+ * lockstep with `blocks-version.json` beside the bundled hex in scratch-gui.
+ * An old hex with no version byte reads as 0; 0 is reserved for "old/unknown"
+ * and always treated as outdated.
+ */
+#define BLOCKS_RUNTIME_VERSION 1
 
 /**
  * Class definition for main logics of Micribit More Service except bluetooth connectivity.
  *
  */
-class MbitMoreDevice {
+class BlocksDevice {
 private:
   /**
    * Constructor.
-   * Create a representation of default extension for Scratch3.
+   * Create a representation of default extension for the blocks editor.
    * @param _uBit The instance of a MicroBit runtime.
    */
-  MbitMoreDevice(MicroBit &_uBit);
+  BlocksDevice(MicroBit &_uBit);
 
   /**
-   * @brief Destroy the MbitMoreDevice object
+   * @brief Destroy the BlocksDevice object
    *
    */
-  ~MbitMoreDevice();
+  ~BlocksDevice();
 
 public:
   // setup the class as singleton
-  MbitMoreDevice(const MbitMoreDevice &) = delete;
-  MbitMoreDevice &operator=(const MbitMoreDevice &) = delete;
-  MbitMoreDevice(MbitMoreDevice &&) = delete;
-  MbitMoreDevice &operator=(MbitMoreDevice &&) = delete;
+  BlocksDevice(const BlocksDevice &) = delete;
+  BlocksDevice &operator=(const BlocksDevice &) = delete;
+  BlocksDevice(BlocksDevice &&) = delete;
+  BlocksDevice &operator=(BlocksDevice &&) = delete;
 
   /**
    * @brief Get the Instance object as singleton
    * 
-   * @return MbitMoreDevice& 
+   * @return BlocksDevice& 
    */
-  static MbitMoreDevice &getInstance() {
-    static MbitMoreDevice instance(pxt::uBit);
+  static BlocksDevice &getInstance() {
+    static BlocksDevice instance(pxt::uBit);
     return instance;
   }
 
@@ -118,21 +130,21 @@ public:
    * @brief BLE service for basic micro:bit extension.
    *
    */
-  MbitMoreService *basicService;
+  BlocksService *basicService;
 
   /**
    * @brief BLE service for Microbit More extension.
    *
    */
-  MbitMoreService *moreService;
+  BlocksService *moreService;
 
-#if MBIT_MORE_USE_SERIAL
+#if BLOCKS_USE_SERIAL
   /**
    * @brief Microbit More serial port connector.
    * 
    */
-  MbitMoreSerial *serialService;
-#endif // MBIT_MORE_USE_SERIAL
+  BlocksSerial *serialService;
+#endif // BLOCKS_USE_SERIAL
 
   // ---------------------
 
@@ -146,7 +158,7 @@ public:
    * @brief Index of controllabel GPIO pins.
    * 
    */
-  int gpioPin[10] = {0, 1, 2, 3, 8, 12, 13, 14, 15, 16};
+  int gpioPin[11] = {0, 1, 2, 3, 8, 12, 13, 14, 15, 16, 17};
 
   /**
    * @brief Pins which is pull-up at connected.
@@ -155,6 +167,24 @@ public:
   int initialPullUp[4] = {0, 1, 2, 3};
 
   bool touchMode[4] = {false};
+
+  // Sensing mode each touch pin is currently armed in: -1 = not armed,
+  // 0 = Capacitative, 1 = Resistive. Lets CMD_CONFIG TOUCH be idempotent — the
+  // editor re-sends the touch-enable on every program (re)start and after each
+  // pinMode reset, and re-running isTouched(mode) re-attaches/re-calibrates the
+  // codal TouchButton and keeps the shared cap-touch sampler churning (with >1
+  // armed pad that hammers the SoftDevice radio IRQ). We only (re)arm on a
+  // genuine off->on transition or an actual mode change.
+  int8_t touchArmedMode[4] = {-1, -1, -1, -1};
+
+  // Wall-clock (ms, system_timer_current_time) when each touch pad was last
+  // (re)armed. Drives the TOUCH_ARM_GUARD_MS window in onButtonChanged that
+  // suppresses post-arm calibration/settle phantom events (ghost touches).
+  uint32_t touchArmTime[4] = {0, 0, 0, 0};
+
+  // Wall-clock (ms) of the last BLE connect, for the CONNECT_GUARD_MS window in
+  // onButtonChanged that drops the connect-time phantom click burst.
+  uint32_t bleConnectTime = 0;
 
   /**
    * @brief Shadow screen to display on the LED.
@@ -175,20 +205,20 @@ public:
 
 #if MICROBIT_CODAL
   /**
-   * @brief Structure of received data in MbitMore.
+   * @brief Structure of received data in Blocks.
    * 
    */
   typedef struct {
-    char label[MBIT_MORE_DATA_LABEL_SIZE];            /** label of the data */
-    MbitMoreDataContentType type;                     /** type of the content */
-    uint8_t content[MBIT_MORE_DATA_CONTENT_SIZE + 1]; /** content of the data */
-  } MbitMoreLabeledData;
+    char label[BLOCKS_DATA_LABEL_SIZE];            /** label of the data */
+    BlocksDataContentType type;                     /** type of the content */
+    uint8_t content[BLOCKS_DATA_CONTENT_SIZE + 1]; /** content of the data */
+  } BlocksLabeledData;
 
   /**
-   * @brief Store of received data from Scratch.
+   * @brief Store of received data from the blocks editor.
    * 
    */
-  MbitMoreLabeledData receivedData[MBIT_MORE_WAITING_DATA_LABELS_LENGTH] = {{{0}}};
+  BlocksLabeledData receivedData[BLOCKS_WAITING_DATA_LABELS_LENGTH] = {{{0}}};
 #endif // MICROBIT_CODAL
 
   /**
@@ -213,18 +243,29 @@ public:
   /**
    * Protocol of microbit more.
    */
-  int mbitMoreProtocol;
+  int blocksProtocol;
 
   /**
    * Current mode of all pins.
    */
-  MbitMorePullMode pullMode[sizeof(gpioPin) / sizeof(gpioPin[0])];
+  BlocksPullMode pullMode[sizeof(gpioPin) / sizeof(gpioPin[0])];
 
   /**
    * @brief Set pin configuration for initial.
    *
    */
   void initializeConfig();
+
+  /**
+   * @brief Soft-reset the blocks session: stop outputs, disarm touch, show the
+   * name pattern, and be ready for fresh commands/events. No reboot.
+   */
+  void resetBlocksState();
+
+  /**
+   * @brief Show the device's name histogram pattern (static; identifies the mini).
+   */
+  void displayNamePattern();
 
   /**
    * @brief Update version data on the charactaristic.
@@ -333,7 +374,7 @@ public:
    * @param dataType type of the data
    * @return int index of the label
    */
-  int findWaitingDataLabelIndex(const char *dataLabel, MbitMoreDataContentType dataType);
+  int findWaitingDataLabelIndex(const char *dataLabel, BlocksDataContentType dataType);
 
   /**
    * @brief Register data label and retrun ID for the label.
@@ -342,7 +383,7 @@ public:
    * @param dataType type of the data
    * @return int ID for the label
    */
-  int registerWaitingDataLabel(ManagedString dataLabel, MbitMoreDataContentType dataType);
+  int registerWaitingDataLabel(ManagedString dataLabel, BlocksDataContentType dataType);
 
   /**
    * @brief Get type of content for the labeled data
@@ -350,7 +391,7 @@ public:
    * @param labelID ID of the label in received data
    * @return content type
    */
-  MbitMoreDataContentType dataType(int labelID);
+  BlocksDataContentType dataType(int labelID);
 
   /**
    * @brief Return content of the data as number
@@ -420,7 +461,7 @@ private:
    * @param pinIndex index to set
    * @param pull pull-mode to set
    */
-  void setPullMode(int pinIndex, MbitMorePullMode pull);
+  void setPullMode(int pinIndex, BlocksPullMode pull);
 
   /**
    * @brief Set the value on the pin as digital output.
@@ -480,4 +521,4 @@ private:
   bool isGpio(int pinIndex);
 };
 
-#endif // MBIT_MORE_DEVICE_H
+#endif // BLOCKS_DEVICE_H
