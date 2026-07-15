@@ -44,21 +44,22 @@ BlocksServiceDAL::BlocksServiceDAL() : uBit(pxt::uBit) {
           GattCharacteristic::BLE_GATT_CHAR_PROPERTIES_READ);
   commandCh->requireSecurity(SecurityManager::MICROBIT_BLE_SECURITY_LEVEL);
 
-  // STATE + MOTION are READ-only on DAL (mini 1/2): the editor polls them. The
-  // codal (mini 3) STATE/MOTION NOTIFY was dropped here because each notifiable
-  // characteristic costs an extra CCCD + notification machinery on the heap, and
-  // the nRF51 (8 KB app RAM after S110) is too tight — it OOM'd (panic 020) at
-  // service creation with the extra CCCDs. READ keeps mini 1/2 fully functional.
+  // STATE + MOTION are READ + NOTIFY (runtime v2): the device pushes them ~every
+  // 57ms from update() so a subscribed editor need not poll them with 2 GATT
+  // reads per tick. READ is kept for older editors. Mirrors codal BlocksService.
+  // (mini 2 = 32KB nRF51, so the extra CCCDs are no longer a RAM concern.)
   stateCh = new GattCharacteristic(
       BLOCKS_CH_STATE, (uint8_t *)&stateChBuffer,
       BLOCKS_CH_BUFFER_SIZE_STATE, BLOCKS_CH_BUFFER_SIZE_STATE,
-      GattCharacteristic::BLE_GATT_CHAR_PROPERTIES_READ);
+      GattCharacteristic::BLE_GATT_CHAR_PROPERTIES_READ |
+          GattCharacteristic::BLE_GATT_CHAR_PROPERTIES_NOTIFY);
   stateCh->requireSecurity(SecurityManager::MICROBIT_BLE_SECURITY_LEVEL);
 
   motionCh = new GattCharacteristic(
       BLOCKS_CH_MOTION, (uint8_t *)&motionChBuffer,
       BLOCKS_CH_BUFFER_SIZE_MOTION, BLOCKS_CH_BUFFER_SIZE_MOTION,
-      GattCharacteristic::BLE_GATT_CHAR_PROPERTIES_READ);
+      GattCharacteristic::BLE_GATT_CHAR_PROPERTIES_READ |
+          GattCharacteristic::BLE_GATT_CHAR_PROPERTIES_NOTIFY);
   motionCh->requireSecurity(SecurityManager::MICROBIT_BLE_SECURITY_LEVEL);
 
   // Unified notify channel: pin events, button/gesture (action) events and
@@ -191,13 +192,27 @@ bool BlocksServiceDAL::isBleConnected() {
  * matching the codal BlocksService idle behaviour — no display takeover.
  */
 void BlocksServiceDAL::update() {
-  if (isBleConnected()) {
-    blocks->updateState(stateChBuffer);
-    uBit.ble->gattServer().write(stateCh->getValueHandle(), stateChBuffer,
-                                 BLOCKS_CH_BUFFER_SIZE_STATE);
-    blocks->updateMotion(motionChBuffer);
-    uBit.ble->gattServer().write(motionCh->getValueHandle(), motionChBuffer,
-                                 BLOCKS_CH_BUFFER_SIZE_MOTION);
+  if (!isBleConnected())
+    return;
+  blocks->updateState(stateChBuffer);
+  blocks->updateMotion(motionChBuffer);
+  // Refresh the stored GATT value every tick (localOnly=true = update value, no
+  // notification) so editors that READ (poll) see fresh data; NOTIFY is driven
+  // on the v2 cadence below, not as a per-write side effect.
+  uBit.ble->gattServer().write(stateCh->getValueHandle(), stateChBuffer,
+                               BLOCKS_CH_BUFFER_SIZE_STATE, true);
+  uBit.ble->gattServer().write(motionCh->getValueHandle(), motionChBuffer,
+                               BLOCKS_CH_BUFFER_SIZE_MOTION, true);
+  // Push STATE + MOTION via NOTIFY (runtime v2). update() runs ~every 19ms, so
+  // notify every 3rd call (~57ms). gattServer().notify() is a harmless error
+  // return when the central hasn't subscribed. Mirrors codal BlocksService.
+  static uint8_t notifyDivider = 0;
+  if (++notifyDivider >= 3) {
+    notifyDivider = 0;
+    uBit.ble->gattServer().notify(stateCh->getValueHandle(), stateChBuffer,
+                                  BLOCKS_CH_BUFFER_SIZE_STATE);
+    uBit.ble->gattServer().notify(motionCh->getValueHandle(), motionChBuffer,
+                                  BLOCKS_CH_BUFFER_SIZE_MOTION);
   }
 }
 
