@@ -44,6 +44,11 @@ BlocksServiceDAL::BlocksServiceDAL() : uBit(pxt::uBit) {
           GattCharacteristic::BLE_GATT_CHAR_PROPERTIES_READ);
   commandCh->requireSecurity(SecurityManager::MICROBIT_BLE_SECURITY_LEVEL);
 
+  // STATE + MOTION are READ-only on DAL (mini 1/2): the editor polls them. The
+  // codal (mini 3) STATE/MOTION NOTIFY was dropped here because each notifiable
+  // characteristic costs an extra CCCD + notification machinery on the heap, and
+  // the nRF51 (8 KB app RAM after S110) is too tight — it OOM'd (panic 020) at
+  // service creation with the extra CCCDs. READ keeps mini 1/2 fully functional.
   stateCh = new GattCharacteristic(
       BLOCKS_CH_STATE, (uint8_t *)&stateChBuffer,
       BLOCKS_CH_BUFFER_SIZE_STATE, BLOCKS_CH_BUFFER_SIZE_STATE,

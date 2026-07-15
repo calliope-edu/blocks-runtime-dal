@@ -3,12 +3,31 @@
 
 #include "PxtShim.h"
 
+// USB live-Blocks transport selection. There are two USB transports; build at
+// most one (BLE always coexists). Each is overridable via a -D build define.
+//
+//   BLOCKS_USE_DAP    — CMSIS-DAP RAM-mailbox (the host pokes a mailbox in our
+//                       RAM over the debug port; no UART). codal/mini-3 only:
+//                       fast + reliable (USB CRC+retransmit), no 115200 limit.
+//   BLOCKS_USE_SERIAL — legacy UART CDC serial transport. Slow/lossy; kept
+//                       behind the flag for A/B but built OFF on codal.
+//
+// On codal (mini 3) DAP replaces serial. On v1/DAL neither is used (BLE-only;
+// the J-Link interface can't do CMSIS-DAP, and there isn't memory for serial).
+#ifndef BLOCKS_USE_DAP
 #if MICROBIT_CODAL
-#define BLOCKS_USE_SERIAL 1 // 1 for use USB serial
+#define BLOCKS_USE_DAP 1
 #else // MICROBIT_CODAL
-// v1 has not enough memory space
-#define BLOCKS_USE_SERIAL 0 // 1 for use USB serial
+#define BLOCKS_USE_DAP 0
 #endif // MICROBIT_CODAL
+#endif // BLOCKS_USE_DAP
+
+#ifndef BLOCKS_USE_SERIAL
+#define BLOCKS_USE_SERIAL 0
+#endif // BLOCKS_USE_SERIAL
+
+// Start-of-frame delimiter for the framed USB transports (serial + DAP mailbox).
+#define BLOCKS_SFD 0xff
 
 #define BLOCKS_DATA_RECEIVED 8000
 
@@ -42,6 +61,15 @@ enum BlocksDataContentType
 // burst across Button A AND the touch pads; this covers sources like Button A
 // that don't calibrate and so aren't caught by the per-pad arm guard.
 #define CONNECT_GUARD_MS 6000
+
+// Guard window (ms) after a pin is (re)armed for edge/pulse events during which
+// events from that pin are suppressed. Arming flips the pull-up and arms the
+// nRF SENSE latch, which can register a spurious RISE/FALL with no real input.
+// Re-arming on green-flag / reconnect (the config-state reconcile) would
+// otherwise surface that phantom as a ghost pin event. Short (a digital edge
+// settles fast, unlike capacitive touch) so a real press right after start is
+// never dropped. The pin-event analogue of TOUCH_ARM_GUARD_MS.
+#define PIN_EVENT_ARM_GUARD_MS 300
 
 enum BlocksCommand // 3 bits (0x00..0x07)
 {
@@ -79,6 +107,13 @@ enum BlocksDisplayCommand
   TEXT = 0x01,
   PIXELS_0 = 0x02,
   PIXELS_1 = 0x03,
+  // Whole 5x5 on/off image in ONE frame: data[1..4] = 25-bit column-major-by-row
+  // bitmap (bit (row*5+col); 1 = LED full-on, 0 = off). Renders immediately, so
+  // it is atomic — no PIXELS_0/PIXELS_1 split, hence no torn "half image" — and
+  // one BLE round-trip instead of two. Used by the editor for the standard
+  // on/off display block; the brightness path still uses PIXELS_0/PIXELS_1.
+  // Fits the 20-byte MTU (5 bytes: id + 4 bitmap). Added in runtime v2.
+  PIXELS_PACKED = 0x04,
 };
 
 /**

@@ -30,18 +30,16 @@ uint8_t readSync() {
   // Read one byte with minimal latency:
   //  - Fast path: a byte is already buffered → read it immediately (ASYNC), so a
   //    fully-buffered frame drains back-to-back with no sleeping.
-  //  - Slow path: buffer empty → block on the RX event (SYNC_SLEEP). The runtime
-  //    parks the fiber and wakes it the instant the next byte is stored, so other
-  //    fibers (broadcaster + event-notify handlers) still run meanwhile.
+  //  - Slow path: buffer empty → block on the RX event (SYNC_SLEEP). CODAL parks
+  //    the fiber via fiber_wake_on_event(CODAL_SERIAL_EVT_HEAD_MATCH) and wakes
+  //    it the instant dataReceived() stores the next byte (see Serial.cpp), so
+  //    other fibers (broadcaster + event-notify handlers) still run meanwhile.
   //
   // This replaces a `while (rxBufferedSize() <= 0) fiber_sleep(1);` spin that
   // added up to a full scheduler tick of latency before the first byte of each
   // command frame was even looked at — the dominant inbound USB-command lag. The
   // overflow problem the spin once guarded against doesn't recur: buffered bytes
   // are still consumed flat-out, the empty-wait is just event-driven now.
-  //
-  // NOTE: on v1/DAL this whole file is compiled out (BLOCKS_USE_SERIAL == 0, see
-  // BlocksCommon.h) — kept identical to the codal tree for source parity.
   if (uBit.serial.rxBufferedSize() > 0) {
     return uBit.serial.read(ASYNC); // present → returns without sleeping
   }

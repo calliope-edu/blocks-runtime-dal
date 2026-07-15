@@ -172,6 +172,9 @@ BlocksDevice::BlocksDevice(MicroBit &_uBit) : uBit(_uBit) {
 #if BLOCKS_USE_SERIAL
   serialService = new BlocksSerial(*this);
 #endif // BLOCKS_USE_SERIAL
+#if BLOCKS_USE_DAP
+  dapService = new BlocksDap(*this);
+#endif // BLOCKS_USE_DAP
 }
 
 BlocksDevice::~BlocksDevice() {
@@ -293,6 +296,19 @@ void BlocksDevice::updateVersionData() {
   // (touchMode[]) — no persistence; naturally 0 after a reset/boot.
   data[4] = (uint8_t)((touchMode[0] ? 0x01 : 0) | (touchMode[1] ? 0x02 : 0) |
                       (touchMode[2] ? 0x04 : 0) | (touchMode[3] ? 0x08 : 0));
+  // data[5..7] = pin-event-armed bitmap (bit p = Pn armed for an edge/pulse
+  // event via CMD_PIN SET_EVENT). The editor reconciles against this just like
+  // the touch mask: a pin it wants armed but reads 0 here was dropped/reset, so
+  // it re-sends SET_EVENT; a pin armed here that it does NOT want, it disarms.
+  // Live RAM (pinEventMode[]) — naturally 0 after boot. Written fresh here every
+  // read since commandChBuffer is shared with command WRITEs.
+  uint32_t pinEventMask = 0;
+  for (int p = 0; p < (int)(sizeof(pinEventMode) / sizeof(pinEventMode[0])); p++) {
+    if (pinEventMode[p] != BlocksPinEventType::NONE) pinEventMask |= (1u << p);
+  }
+  data[5] = (uint8_t)(pinEventMask & 0xff);
+  data[6] = (uint8_t)((pinEventMask >> 8) & 0xff);
+  data[7] = (uint8_t)((pinEventMask >> 16) & 0xff);
 }
 
 /**
@@ -322,6 +338,11 @@ void BlocksDevice::onBLEDisconnected(MicroBitEvent _e) {
 void BlocksDevice::onSerialConnected() {
   resetBlocksState();
   serialConnected = true;
+}
+
+void BlocksDevice::onDapConnected() {
+  resetBlocksState();
+  dapConnected = true;
 }
 
 /**
@@ -401,14 +422,43 @@ void BlocksDevice::onCommandReceived(uint8_t *data, size_t length) {
       char text[length - 1] = {0};
       memcpy(text, &(data[2]), length - 2);
       displayText(text, (data[1] * 10));
+    } else if (displayCommand == BlocksDisplayCommand::PIXELS_PACKED) {
+      // Whole 5x5 on/off image in ONE atomic frame: data[1..4] = 25-bit bitmap,
+      // bit (row*5+col); 1 = LED full-on. No PIXELS_0/PIXELS_1 split, so it can
+      // never render torn, and it's a single BLE round-trip. The editor sends
+      // this for the standard on/off display block (brightness still uses the
+      // 2-frame path below).
+      uint32_t bits = (uint32_t)data[1] | ((uint32_t)data[2] << 8) |
+                      ((uint32_t)data[3] << 16) | ((uint32_t)data[4] << 24);
+      for (int row = 0; row < 5; row++) {
+        for (int col = 0; col < 5; col++) {
+          shadowPixcels[row][col] = ((bits >> (row * 5 + col)) & 1u) ? 255 : 0;
+        }
+      }
+      pendingDisplayGen = -1; // single frame: no half-frame state to carry
+      displayShadowPixels();
     } else if (displayCommand == BlocksDisplayCommand::PIXELS_0) {
       setPixelsShadowLine(0, &data[1]);
       setPixelsShadowLine(1, &data[6]);
       setPixelsShadowLine(2, &data[11]);
+      // Optional trailing generation byte (data[16]) — the editor stamps the
+      // same value into this frame's PIXELS_0 and PIXELS_1 so PIXELS_1 can
+      // detect a dropped/reordered top half. -1 when the editor sends none.
+      pendingDisplayGen = (length > 16) ? (int)data[16] : -1;
     } else if (displayCommand == BlocksDisplayCommand::PIXELS_1) {
-      setPixelsShadowLine(3, &data[1]);
-      setPixelsShadowLine(4, &data[6]);
-      displayShadowPixels();
+      const int gen = (length > 11) ? (int)data[11] : -1;
+      // Torn-frame guard: if this bottom half is tagged with a generation that
+      // does NOT match the last top half (PIXELS_0 dropped/reordered), skip the
+      // render and keep the last complete image rather than showing new-bottom
+      // over old-top (the BLE "half image"). Untagged frames render as before.
+      if (gen >= 0 && pendingDisplayGen >= 0 && gen != pendingDisplayGen) {
+        // torn frame — drop the render; the editor re-sends the full frame.
+      } else {
+        setPixelsShadowLine(3, &data[1]);
+        setPixelsShadowLine(4, &data[6]);
+        displayShadowPixels();
+      }
+      pendingDisplayGen = -1;
     }
   } else if (command == BlocksCommand::CMD_PIN) {
     const int pinCommand = data[0] & 0b11111;
@@ -854,6 +904,14 @@ void BlocksDevice::sendNumberWithLabel(ManagedString dataLabel, float dataConten
   copyManagedString((char *)(&data[0]), dataLabel, BLOCKS_DATA_LABEL_SIZE);
   memcpy(&data[BLOCKS_DATA_LABEL_SIZE], &dataContent, 4);
   data[BLOCKS_DATA_FORMAT_INDEX] = BlocksDataFormat::DATA_NUMBER;
+#if BLOCKS_USE_DAP
+  // Prefer BLE whenever a BLE central is connected; otherwise route the event to
+  // the CMSIS-DAP mailbox (the codal USB transport — it replaces serial here).
+  if (dapConnected && !moreService->isBleConnected()) {
+    dapService->notifyOnDap(0x0110, data, BLOCKS_CH_BUFFER_SIZE_NOTIFY);
+    return;
+  }
+#endif // BLOCKS_USE_DAP
 #if BLOCKS_USE_SERIAL
   // Prefer BLE whenever a BLE central is connected; only fall back to serial
   // when BLE is NOT connected. `serialConnected` latches true on the first USB
@@ -886,6 +944,14 @@ void BlocksDevice::sendTextWithLabel(ManagedString dataLabel, ManagedString data
       dataContent,
       BLOCKS_DATA_CONTENT_SIZE);
   data[BLOCKS_DATA_FORMAT_INDEX] = BlocksDataFormat::DATA_TEXT;
+#if BLOCKS_USE_DAP
+  // Prefer BLE whenever a BLE central is connected; otherwise route the event to
+  // the CMSIS-DAP mailbox (the codal USB transport — it replaces serial here).
+  if (dapConnected && !moreService->isBleConnected()) {
+    dapService->notifyOnDap(0x0110, data, BLOCKS_CH_BUFFER_SIZE_NOTIFY);
+    return;
+  }
+#endif // BLOCKS_USE_DAP
 #if BLOCKS_USE_SERIAL
   // Prefer BLE whenever a BLE central is connected; only fall back to serial
   // when BLE is NOT connected. `serialConnected` latches true on the first USB
@@ -987,17 +1053,40 @@ void BlocksDevice::listenPinEventOn(int pinIndex, int eventType) {
     setPullMode(pinIndex, pullMode[pinIndex]); // does not work?
 #endif // MICROBIT_CODAL
   }
+  // Record the armed event type so updateVersionData() reports it in the
+  // pin-event bitmask (the editor reconciles + re-arms a dropped SET_EVENT).
+  // isGpio(pinIndex) was already guaranteed at the top of this function.
+  if (pinIndex >= 0 &&
+      pinIndex < (int)(sizeof(pinEventMode) / sizeof(pinEventMode[0]))) {
+    pinEventMode[pinIndex] = (int8_t)eventType;
+    // Start the post-arm guard window so onPinEvent drops the phantom edge that
+    // arming produces. Only on a real arm (NONE is a disarm — nothing to guard).
+    if (eventType != BlocksPinEventType::NONE) {
+      pinEventArmTime[pinIndex] = (uint32_t)system_timer_current_time();
+    }
+  }
 }
 
 /**
  * Callback. Invoked when a pin event sent.
  */
 void BlocksDevice::onPinEvent(MicroBitEvent evt) {
+  // conventional scheme to convert from componentID to pin index in v1 and v2.
+  int pinIndex = evt.source - 100;
+  // Drop the phantom edge a pin emits right after it is (re)armed (pull-up flip /
+  // SENSE latch), so re-arming on green-flag / reconnect doesn't surface a ghost
+  // event. Mirrors the touch pad arm guard. A real press settles well after this
+  // short window, so genuine input is never dropped.
+  if (pinIndex >= 0 &&
+      pinIndex < (int)(sizeof(pinEventArmTime) / sizeof(pinEventArmTime[0]))) {
+    uint32_t now = (uint32_t)system_timer_current_time();
+    if (now - pinEventArmTime[pinIndex] < PIN_EVENT_ARM_GUARD_MS) return;
+  }
+
   uint8_t *data = moreService->pinEventChBuffer;
 
   // pinIndex is sent as uint8_t.
-  // conventional scheme to convert from componentID to pin index in v1 and v2.
-  data[0] = evt.source - 100;
+  data[0] = pinIndex;
   // event ID is sent as uint8_t.
   data[1] = (uint8_t)evt.value;
 
@@ -1006,6 +1095,14 @@ void BlocksDevice::onPinEvent(MicroBitEvent evt) {
   uint32_t timestamp = (uint32_t)evt.timestamp;
   memcpy(&(data[2]), &timestamp, 4);
   data[BLOCKS_DATA_FORMAT_INDEX] = BlocksDataFormat::PIN_EVENT;
+#if BLOCKS_USE_DAP
+  // Prefer BLE whenever a BLE central is connected; otherwise route the event to
+  // the CMSIS-DAP mailbox (the codal USB transport — it replaces serial here).
+  if (dapConnected && !moreService->isBleConnected()) {
+    dapService->notifyOnDap(0x0110, data, BLOCKS_CH_BUFFER_SIZE_NOTIFY);
+    return;
+  }
+#endif // BLOCKS_USE_DAP
 #if BLOCKS_USE_SERIAL
   // Prefer BLE whenever a BLE central is connected; only fall back to serial
   // when BLE is NOT connected. `serialConnected` latches true on the first USB
@@ -1056,6 +1153,14 @@ void BlocksDevice::onButtonChanged(MicroBitEvent evt) {
   uint32_t timestamp = (uint32_t)evt.timestamp;
   memcpy(&(data[4]), &timestamp, 4);
   data[BLOCKS_DATA_FORMAT_INDEX] = BlocksDataFormat::ACTION_EVENT;
+#if BLOCKS_USE_DAP
+  // Prefer BLE whenever a BLE central is connected; otherwise route the event to
+  // the CMSIS-DAP mailbox (the codal USB transport — it replaces serial here).
+  if (dapConnected && !moreService->isBleConnected()) {
+    dapService->notifyOnDap(0x0110, data, BLOCKS_CH_BUFFER_SIZE_NOTIFY);
+    return;
+  }
+#endif // BLOCKS_USE_DAP
 #if BLOCKS_USE_SERIAL
   // Prefer BLE whenever a BLE central is connected; only fall back to serial
   // when BLE is NOT connected. `serialConnected` latches true on the first USB
@@ -1086,6 +1191,14 @@ void BlocksDevice::onGestureChanged(MicroBitEvent evt) {
   uint32_t timestamp = (uint32_t)evt.timestamp;
   memcpy(&(data[2]), &timestamp, 4);
   data[BLOCKS_DATA_FORMAT_INDEX] = BlocksDataFormat::ACTION_EVENT;
+#if BLOCKS_USE_DAP
+  // Prefer BLE whenever a BLE central is connected; otherwise route the event to
+  // the CMSIS-DAP mailbox (the codal USB transport — it replaces serial here).
+  if (dapConnected && !moreService->isBleConnected()) {
+    dapService->notifyOnDap(0x0110, data, BLOCKS_CH_BUFFER_SIZE_NOTIFY);
+    return;
+  }
+#endif // BLOCKS_USE_DAP
 #if BLOCKS_USE_SERIAL
   // Prefer BLE whenever a BLE central is connected; only fall back to serial
   // when BLE is NOT connected. `serialConnected` latches true on the first USB

@@ -13,6 +13,11 @@
 class BlocksSerial;
 #endif // BLOCKS_USE_SERIAL
 
+#if BLOCKS_USE_DAP
+#include "BlocksDap.h"
+class BlocksDap;
+#endif // BLOCKS_USE_DAP
+
 #if MICROBIT_CODAL
 #include "BlocksService.h"
 class BlocksService;
@@ -81,8 +86,12 @@ enum BlocksProtocol
  * lockstep with `blocks-version.json` beside the bundled hex in scratch-gui.
  * An old hex with no version byte reads as 0; 0 is reserved for "old/unknown"
  * and always treated as outdated.
+ *
+ * v2 (2026-07): single-frame packed on/off display (CMD_DISPLAY PIXELS_PACKED),
+ * torn-frame generation tag on the 2-frame brightness path, and STATE/MOTION
+ * push via NOTIFY. The editor feature-gates all three on runtimeVersion >= 2.
  */
-#define BLOCKS_RUNTIME_VERSION 1
+#define BLOCKS_RUNTIME_VERSION 2
 
 /**
  * Class definition for main logics of Micribit More Service except bluetooth connectivity.
@@ -141,18 +150,32 @@ public:
 #if BLOCKS_USE_SERIAL
   /**
    * @brief Microbit More serial port connector.
-   * 
+   *
    */
   BlocksSerial *serialService;
 #endif // BLOCKS_USE_SERIAL
 
+#if BLOCKS_USE_DAP
+  /**
+   * @brief CMSIS-DAP RAM-mailbox connector (codal USB transport).
+   *
+   */
+  BlocksDap *dapService;
+#endif // BLOCKS_USE_DAP
+
   // ---------------------
 
   /**
-   * @brief Whether the serial port communication is started. 
-   * 
+   * @brief Whether the serial port communication is started.
+   *
    */
   bool serialConnected = false;
+
+  /**
+   * @brief Whether the CMSIS-DAP mailbox communication is started (host attached).
+   *
+   */
+  bool dapConnected = false;
 
   /**
    * @brief Index of controllabel GPIO pins.
@@ -190,6 +213,21 @@ public:
   // suppresses post-arm calibration/settle phantom events (ghost touches).
   uint32_t touchArmTime[4] = {0, 0, 0, 0};
 
+  // Per-pin armed edge/pulse event type (BlocksPinEventType: 0=NONE, 1=ON_EDGE,
+  // 2=ON_PULSE), indexed by pin number. Retained so updateVersionData() can
+  // report which pins are armed for events (COMMAND data[5..7] bitmap), letting
+  // the editor reconcile + re-send a dropped CMD_PIN SET_EVENT — the event-pin
+  // analogue of touchMode[]'s data[4] touch reconcile. Sized past the max GPIO
+  // index (17); writes are isGpio-guarded in listenPinEventOn(). Live RAM, so
+  // naturally 0 (all disarmed) after boot.
+  int8_t pinEventMode[24] = {0};
+
+  // Wall-clock (ms) when each pin was last (re)armed for edge/pulse events.
+  // Drives the PIN_EVENT_ARM_GUARD_MS window in onPinEvent() that drops the
+  // phantom edge produced by arming (pull-up flip / SENSE latch). Same size +
+  // indexing as pinEventMode.
+  uint32_t pinEventArmTime[24] = {0};
+
   // Wall-clock (ms) of the last BLE connect, for the CONNECT_GUARD_MS window in
   // onButtonChanged that drops the connect-time phantom click burst.
   uint32_t bleConnectTime = 0;
@@ -199,6 +237,14 @@ public:
    *
    */
   uint8_t shadowPixcels[5][5] = {{0}};
+
+  // Generation tag of the last CMD_DISPLAY PIXELS_0 (top rows) received, or -1
+  // if none / not tagged. The editor stamps a matching generation into PIXELS_0
+  // and PIXELS_1 of the same frame; displayShadowPixels() runs on PIXELS_1 only
+  // when its tag matches, so a dropped/reordered half is never rendered as a
+  // torn image (new-bottom over old-top). Legacy (untagged) frames render
+  // unconditionally. See onCommandReceived CMD_DISPLAY.
+  int pendingDisplayGen = -1;
 
   /**
    * Samples of Light Level.
@@ -301,9 +347,15 @@ public:
 
   /**
    * @brief Invoke when serial port connects.
-   * 
+   *
    */
   void onSerialConnected();
+
+  /**
+   * @brief Invoke when the CMSIS-DAP mailbox host attaches (first COMMAND read).
+   *
+   */
+  void onDapConnected();
 
   /**
    * @brief Call when a command was received.

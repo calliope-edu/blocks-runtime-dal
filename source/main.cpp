@@ -10,9 +10,17 @@
  * consolidated 5-characteristic Blocks protocol over BLE (service 0b50f3e4-...).
  *
  * Boot: init the DAL MicroBit, construct BlocksServiceDAL (registers the GATT
- * service + grabs the BlocksDevice singleton), start advertising, then spawn a
- * broadcaster fiber that fills the STATE/MOTION characteristics every ~19 ms
- * (matches the codal runtime), and hand to the DAL scheduler.
+ * service + grabs the BlocksDevice singleton), draw the boot name pattern once,
+ * start advertising, then spawn a broadcaster fiber that fills the STATE/MOTION
+ * characteristics every ~19 ms and hands to the DAL scheduler.
+ *
+ * RAM: nRF51 (mini 1/2) has only ~8 KB app RAM above the S110 SoftDevice, which
+ * is extremely tight for this BLE runtime. Fitting it (and surviving a live
+ * connection) required several RAM cuts — see config.json (dfu_service off,
+ * pairing_mode off), BlocksServiceDAL (STATE/MOTION are READ-only, no NOTIFY),
+ * and the build (MICROBIT_STACK_SIZE trimmed to 1024 to grow the heap). Without
+ * these the runtime panics 020 (out of memory) at service creation / on connect.
+ * device_info_service is kept ON — the connection widget requires 0x180A.
  */
 #include "MicroBit.h"
 #include "BlocksServiceDAL.h"
@@ -57,9 +65,7 @@ static void blocksRuntimeFiber() {
 
     // Boot/idle indicator: the device name histogram pattern (static, one-time,
     // non-blocking) so the user can identify the mini. scratch-vm overwrites the
-    // matrix on its first displayMatrix command after connecting. Shown only
-    // AFTER the service exists (see above) — never construct BlocksDevice earlier
-    // on the main fiber.
+    // matrix on its first displayMatrix command after connecting.
     BlocksDevice::getInstance().displayNamePattern();
 
     // microbit-dal's MicroBit::init() only starts advertising via pairingMode()

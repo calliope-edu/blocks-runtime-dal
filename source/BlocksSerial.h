@@ -6,7 +6,7 @@
 
 #include "BlocksDevice.h"
 
-#define BLOCKS_SFD 0xff
+// BLOCKS_SFD now lives in BlocksCommon.h (shared by the serial + DAP transports).
 #define BLOCKS_RX_BUFFER_SIZE 254
 #define BLOCKS_TX_BUFFER_SIZE 254
 // Max retries when CODAL Serial::send reports the TX lock is held by a

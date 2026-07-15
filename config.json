@@ -4,12 +4,12 @@
     "bluetooth": {
       "enabled":             1,
       "open":                1,
-      "pairing_mode":        1,
+      "pairing_mode":        0,
       "private_addressing":  0,
       "whitelist":           0,
       "advertising_timeout": 0,
       "tx_power":            6,
-      "dfu_service":         1,
+      "dfu_service":         0,
       "device_info_service": 1,
       "event_service":       0,
       "partial_flashing":    0
