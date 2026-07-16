@@ -42,6 +42,7 @@ BlocksServiceDAL::BlocksServiceDAL() : uBit(pxt::uBit) {
       GattCharacteristic::BLE_GATT_CHAR_PROPERTIES_WRITE |
           GattCharacteristic::BLE_GATT_CHAR_PROPERTIES_WRITE_WITHOUT_RESPONSE |
           GattCharacteristic::BLE_GATT_CHAR_PROPERTIES_READ);
+  commandCh->setReadAuthorizationCallback(this, &BlocksServiceDAL::onReadCommand);
   commandCh->requireSecurity(SecurityManager::MICROBIT_BLE_SECURITY_LEVEL);
 
   // STATE + MOTION are READ + NOTIFY (runtime v2): the device pushes them ~every
@@ -129,6 +130,21 @@ void BlocksServiceDAL::onReadAnalogIn(GattReadAuthCallbackParams *authParams) {
     authParams->data = (uint8_t *)&analogInChBuffer;
     authParams->offset = 0;
     authParams->len = BLOCKS_CH_BUFFER_SIZE_ANALOG_IN;
+    authParams->authorizationReply = AUTH_CALLBACK_REPLY_SUCCESS;
+  }
+}
+
+/**
+ * Callback. Invoked when the COMMAND characteristic is read via BLE. Re-stamps
+ * the live version/handshake bytes and returns the buffer so the editor's
+ * periodic version re-read reports the current runtime version (see header).
+ */
+void BlocksServiceDAL::onReadCommand(GattReadAuthCallbackParams *authParams) {
+  if (authParams->handle == commandCh->getValueHandle()) {
+    blocks->updateVersionData();
+    authParams->data = (uint8_t *)&commandChBuffer;
+    authParams->offset = 0;
+    authParams->len = BLOCKS_CH_BUFFER_SIZE_COMMAND;
     authParams->authorizationReply = AUTH_CALLBACK_REPLY_SUCCESS;
   }
 }

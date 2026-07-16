@@ -64,6 +64,16 @@ public:
   void onReadAnalogIn(GattReadAuthCallbackParams *authParams);
 
   /**
+   * Callback. Invoked when the COMMAND characteristic is read via BLE. Re-stamps
+   * the live version/handshake bytes (updateVersionData) and returns the buffer,
+   * so the editor's periodic version re-read always sees the current runtime
+   * version. On DAL the SoftDevice keeps its own copy of the value, so a plain
+   * READ would otherwise return the last COMMAND *write* (a command, byte[3]≈0)
+   * and the editor would report the device as "outdated v0".
+   */
+  void onReadCommand(GattReadAuthCallbackParams *authParams);
+
+  /**
    * Callback. Invoked when any of our attributes are written via BLE.
    */
   void onDataWritten(const GattWriteCallbackParams *params);
