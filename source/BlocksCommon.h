@@ -26,6 +26,32 @@
 #define BLOCKS_USE_SERIAL 0
 #endif // BLOCKS_USE_SERIAL
 
+// BLOCKS_SERIAL_PROBE — minimal UART detection responder ("is Blocks on this
+// mini, and which version?"). Answers ONLY the widget's REQ_READ 0x0100
+// handshake with the regular RES_READ frame (hardware/protocol/route/runtime
+// bytes); it is NOT a comms transport: no broadcaster, no command handling,
+// and it never latches serialConnected, so BLE/DAP comms behave exactly as
+// without it. Works over the mini 3's DAPLink CDC and the mini 2's J-Link
+// UART bridge — one reliable, transport-uniform detection path for the host.
+// Enabled on codal (mini 3); on DAL only for the 32KB (mini 2) build — the
+// 16KB mini 1 has no RAM to spare and stays BLE-only.
+#ifndef BLOCKS_SERIAL_PROBE
+#if MICROBIT_CODAL
+#define BLOCKS_SERIAL_PROBE 1
+#elif defined(YOTTA_CFG_MICROBIT_DAL_SRAM_END) && (YOTTA_CFG_MICROBIT_DAL_SRAM_END >= 0x20008000)
+#define BLOCKS_SERIAL_PROBE 1
+#else
+#define BLOCKS_SERIAL_PROBE 0
+#endif
+#endif // BLOCKS_SERIAL_PROBE
+
+// The full serial transport already answers the probe handshake itself — never
+// run both RX consumers on one UART.
+#if BLOCKS_USE_SERIAL && BLOCKS_SERIAL_PROBE
+#undef BLOCKS_SERIAL_PROBE
+#define BLOCKS_SERIAL_PROBE 0
+#endif // BLOCKS_USE_SERIAL && BLOCKS_SERIAL_PROBE
+
 // Start-of-frame delimiter for the framed USB transports (serial + DAP mailbox).
 #define BLOCKS_SFD 0xff
 

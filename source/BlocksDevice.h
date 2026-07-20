@@ -18,6 +18,11 @@ class BlocksSerial;
 class BlocksDap;
 #endif // BLOCKS_USE_DAP
 
+#if BLOCKS_SERIAL_PROBE
+#include "BlocksProbe.h"
+class BlocksProbe;
+#endif // BLOCKS_SERIAL_PROBE
+
 #if MICROBIT_CODAL
 #include "BlocksService.h"
 class BlocksService;
@@ -162,6 +167,14 @@ public:
    */
   BlocksDap *dapService;
 #endif // BLOCKS_USE_DAP
+
+#if BLOCKS_SERIAL_PROBE
+  /**
+   * @brief Minimal UART detection responder (REQ_READ 0x0100 handshake only).
+   *
+   */
+  BlocksProbe *probeService;
+#endif // BLOCKS_SERIAL_PROBE
 
   // ---------------------
 

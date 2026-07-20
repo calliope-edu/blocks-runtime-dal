@@ -175,6 +175,9 @@ BlocksDevice::BlocksDevice(MicroBit &_uBit) : uBit(_uBit) {
 #if BLOCKS_USE_DAP
   dapService = new BlocksDap(*this);
 #endif // BLOCKS_USE_DAP
+#if BLOCKS_SERIAL_PROBE
+  probeService = new BlocksProbe(*this);
+#endif // BLOCKS_SERIAL_PROBE
 }
 
 BlocksDevice::~BlocksDevice() {
@@ -321,6 +324,10 @@ void BlocksDevice::onBLEConnected(MicroBitEvent _e) {
   fiber_sleep(100); // to change pull-mode in micro:bit v2
 #endif // MICROBIT_CODAL
   resetBlocksState();
+  // Visual connect confirmation: draw a one-time "C" (overwrites the idle name
+  // pattern; stays until the editor's first display command). Lets the user
+  // see the BLE link is up before the editor sends anything.
+  uBit.display.print('C');
 }
 
 /**
