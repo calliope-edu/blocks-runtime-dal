@@ -791,10 +791,15 @@ int BlocksDevice::sampleLightLevel() {
  * @param volume laudness of the sound [0..255]
  */
 void BlocksDevice::playTone(int period, int volume) {
+  // Reference, NEVER a by-value copy: DAL MicroBitPin owns a raw heap pointer
+  // (`void *pin`) with no copy-ctor/dtor. A copy shares that pointer;
+  // obtainAnalogChannel()'s disconnect() then delete's it through the copy,
+  // leaving uBit.io.pin[0] dangling — the next tone/stop double-frees it and
+  // microbit_free panics 030 (MICROBIT_HEAP_ERROR). Observed on mini 2.
 #if MICROBIT_CODAL
-  MicroBitPin speakerPin = uBit.io.speaker;
+  MicroBitPin &speakerPin = uBit.io.speaker;
 #else // NOT MICROBIT_CODAL
-  MicroBitPin speakerPin = uBit.io.pin[0];
+  MicroBitPin &speakerPin = uBit.io.pin[0];
 #endif // NOT MICROBIT_CODAL
   if (period <= 0 || volume == 0) {
     speakerPin.setAnalogValue(0);
@@ -810,10 +815,11 @@ void BlocksDevice::playTone(int period, int volume) {
  * 
  */
 void BlocksDevice::stopTone() {
+  // Reference, not a copy — see playTone (double-free → panic 030 on DAL).
 #if MICROBIT_CODAL
-  MicroBitPin speakerPin = uBit.io.speaker;
+  MicroBitPin &speakerPin = uBit.io.speaker;
 #else // NOT MICROBIT_CODAL
-  MicroBitPin speakerPin = uBit.io.pin[0];
+  MicroBitPin &speakerPin = uBit.io.pin[0];
 #endif // NOT MICROBIT_CODAL
   speakerPin.setAnalogValue(0);
 }
