@@ -487,22 +487,44 @@ void BlocksDevice::onCommandReceived(uint8_t *data, size_t length) {
       memcpy(&value, &(data[2]), 2);
       setAnalogValue(pinIndex, value);
     } else if (pinCommand == BlocksPinCommand::SET_SERVO) {
-      // angle is read as uint16_t little-endian.
-      uint16_t angle;
-      memcpy(&angle, &(data[2]), 2);
-      // range is read as uint16_t little-endian.
-      uint16_t range;
-      memcpy(&range, &(data[4]), 2);
-      // center is read as uint16_t little-endian.
-      uint16_t center;
-      memcpy(&center, &(data[6]), 2);
-      if (range == 0) {
-        uBit.io.pin[pinIndex].setServoValue(angle);
-      } else if (center == 0) {
-        uBit.io.pin[pinIndex].setServoValue(angle, range);
-      } else {
-        uBit.io.pin[pinIndex].setServoValue(angle, range, center);
+#if MICROBIT_CODAL
+      // Servo is mini-3 only, and only on real edge-connector GPIOs. The
+      // editor's pin menu sends raw MbitMore indices — never trust them into
+      // uBit.io.pin[] unguarded.
+      if (isGpio(pinIndex)) {
+        // angle is read as uint16_t little-endian.
+        uint16_t angle;
+        memcpy(&angle, &(data[2]), 2);
+        // range is read as uint16_t little-endian.
+        uint16_t range;
+        memcpy(&range, &(data[4]), 2);
+        // center is read as uint16_t little-endian.
+        uint16_t center;
+        memcpy(&center, &(data[6]), 2);
+        if (range == 0) {
+          uBit.io.pin[pinIndex].setServoValue(angle);
+        } else if (center == 0) {
+          uBit.io.pin[pinIndex].setServoValue(angle, range);
+        } else {
+          uBit.io.pin[pinIndex].setServoValue(angle, range, center);
+        }
+        // setServoValue reprograms its NRF52PWM instance to a 20ms period —
+        // and NRF52PWM::setPeriodUs changes PRESCALER/COUNTERTOP for the
+        // WHOLE instance without rescaling the other channels' compare
+        // values. When the servo pin lands on the instance that (still)
+        // carries the speaker channel, a previously-stopped tone becomes
+        // audible again (HW-observed: audio → stop → servo ⇒ tone; a second
+        // stop AFTER the servo silences it for good). Automate exactly that
+        // proven workaround: re-zero the speaker under the new period.
+        uBit.io.speaker.setAnalogValue(0);
       }
+#else // NOT MICROBIT_CODAL
+      // No servo support on mini 1/2 (product decision) — and several of the
+      // editor's servo pin indices land on LED-matrix column drivers (3, 9,
+      // 13, 14, 15) or the internal I2C SCL (17) in the DAL uBit.io.pin[]
+      // layout, so an unguarded write lit random pixels. Ignore entirely.
+      (void)pinIndex;
+#endif // NOT MICROBIT_CODAL
     } else if (pinCommand == BlocksPinCommand::SET_EVENT) {
       listenPinEventOn(pinIndex, (int)data[2]);
     }
@@ -791,16 +813,10 @@ int BlocksDevice::sampleLightLevel() {
  * @param volume laudness of the sound [0..255]
  */
 void BlocksDevice::playTone(int period, int volume) {
-  // Reference, NEVER a by-value copy: DAL MicroBitPin owns a raw heap pointer
-  // (`void *pin`) with no copy-ctor/dtor. A copy shares that pointer;
-  // obtainAnalogChannel()'s disconnect() then delete's it through the copy,
-  // leaving uBit.io.pin[0] dangling — the next tone/stop double-frees it and
-  // microbit_free panics 030 (MICROBIT_HEAP_ERROR). Observed on mini 2.
 #if MICROBIT_CODAL
+  // Reference, NEVER a by-value copy — a MicroBitPin copy shares the pin's
+  // owned driver pointer and frees it through the copy (double-free).
   MicroBitPin &speakerPin = uBit.io.speaker;
-#else // NOT MICROBIT_CODAL
-  MicroBitPin &speakerPin = uBit.io.pin[0];
-#endif // NOT MICROBIT_CODAL
   if (period <= 0 || volume == 0) {
     speakerPin.setAnalogValue(0);
   } else {
@@ -808,6 +824,26 @@ void BlocksDevice::playTone(int period, int volume) {
     speakerPin.setAnalogValue(v);
     speakerPin.setAnalogPeriodUs(period);
   }
+#else // NOT MICROBIT_CODAL
+  // Calliope mini 1/2 has NO speaker pin: the onboard speaker hangs off the
+  // DRV8837 sound/motor driver. PWM on uBit.io.pin[0] (the micro:bit MbitMore
+  // convention this code came from) is inaudible here — drive the
+  // CalliopeSoundMotor instead. It also owns the sound/motor dual-mode
+  // bookkeeping, so tones coexist with a running motor.
+  if (period <= 0 || volume == 0) {
+    uBit.soundmotor.soundOff();
+  } else {
+    uint32_t freq = 1000000u / (uint32_t)period;
+    if (freq < 1) {
+      uBit.soundmotor.soundOff();
+    } else {
+      // Two-level volume: the driver has no duty control for sound, only a
+      // "silent" (half-drive) mode — map the lower half of the range to it.
+      uBit.soundmotor.setSoundSilentMode(volume < 128);
+      uBit.soundmotor.soundOn((uint16_t)freq);
+    }
+  }
+#endif // NOT MICROBIT_CODAL
 }
 
 /**
@@ -815,13 +851,13 @@ void BlocksDevice::playTone(int period, int volume) {
  * 
  */
 void BlocksDevice::stopTone() {
-  // Reference, not a copy — see playTone (double-free → panic 030 on DAL).
 #if MICROBIT_CODAL
+  // Reference, not a copy — see playTone.
   MicroBitPin &speakerPin = uBit.io.speaker;
-#else // NOT MICROBIT_CODAL
-  MicroBitPin &speakerPin = uBit.io.pin[0];
-#endif // NOT MICROBIT_CODAL
   speakerPin.setAnalogValue(0);
+#else // NOT MICROBIT_CODAL
+  uBit.soundmotor.soundOff();
+#endif // NOT MICROBIT_CODAL
 }
 
 #if MICROBIT_CODAL
