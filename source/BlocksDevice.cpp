@@ -604,6 +604,7 @@ void BlocksDevice::onCommandReceived(uint8_t *data, size_t length) {
           // (re)armed TouchButton calibrates/settles over the next ~0.5-2s and
           // can emit a phantom DOWN/UP with no real touch.
           touchArmTime[pinIndex] = (uint32_t)system_timer_current_time();
+          touchRecalDone[pinIndex] = false; // arm the one-shot post-arm recal
         }
       } else {
         uBit.messageBus.ignore(
@@ -713,6 +714,27 @@ void BlocksDevice::updateState(uint8_t *data) {
   if (touchMode[3]) {
     digitalLevels = digitalLevels | (uBit.io.pin[3].isTouched() << BlocksButtonStateIndex::P3);
   }
+#if MICROBIT_CODAL
+  // One-shot post-arm recalibration to heal a pad armed while it was being held
+  // (its ctor calibration captured the touched baseline → reads not-touched
+  // forever). Fires ONCE per arm (touchRecalDone latch — never periodic), only
+  // after TOUCH_RECAL_DELAY_MS, and only if the pad currently reads RELEASED so
+  // a healthy held pad is never disturbed. If the pad was poisoned and the user
+  // has since let go, it now reads released → recalibrate captures the true
+  // baseline and the pad senses again.
+  {
+    uint32_t now = (uint32_t)system_timer_current_time();
+    for (int p = 0; p <= 3; p++) {
+      if (!touchMode[p] || touchArmedMode[p] != 0) continue; // capacitive-armed only
+      if (touchRecalDone[p]) continue;
+      if (now - touchArmTime[p] < TOUCH_RECAL_DELAY_MS) continue;
+      if (!uBit.io.pin[p].isTouched()) {
+        uBit.io.pin[p].touchCalibrate();
+      }
+      touchRecalDone[p] = true; // one-shot regardless (held pad: leave as-is)
+    }
+  }
+#endif // MICROBIT_CODAL
   digitalLevels = digitalLevels | (uBit.buttonA.isPressed() << BlocksButtonStateIndex::A);
   digitalLevels = digitalLevels | (uBit.buttonB.isPressed() << BlocksButtonStateIndex::B);
 #if MICROBIT_CODAL

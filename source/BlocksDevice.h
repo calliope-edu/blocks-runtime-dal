@@ -230,6 +230,12 @@ public:
   // suppresses post-arm calibration/settle phantom events (ghost touches).
   uint32_t touchArmTime[4] = {0, 0, 0, 0};
 
+  // Whether the one-shot post-arm recalibration has already run for each pad
+  // (see TOUCH_RECAL_DELAY_MS). Reset to false on every (re)arm; set true once
+  // the recalibration fires, so it never repeats (periodic recalibration made
+  // touch deaf for seconds). Codal-only heal for the armed-while-touched pad.
+  bool touchRecalDone[4] = {false, false, false, false};
+
   // Per-pin armed edge/pulse event type (BlocksPinEventType: 0=NONE, 1=ON_EDGE,
   // 2=ON_PULSE), indexed by pin number. Retained so updateVersionData() can
   // report which pins are armed for events (COMMAND data[5..7] bitmap), letting

@@ -78,15 +78,33 @@ enum BlocksDataContentType
 
 // Guard window (ms) after a touch pad is (re)armed during which button events
 // from that pad are suppressed. A freshly-armed capacitive TouchButton
-// calibrates/settles over ~0.5-2s (longer with several pads) and can emit a
-// phantom DOWN/UP with no real touch; dropping those prevents ghost touches.
-#define TOUCH_ARM_GUARD_MS 4000
+// calibrates over ~0.5-1s, during which codal's buttonActive() already returns
+// 0 (no event can fire), and can emit one phantom DOWN/UP right at calibration
+// completion; this window only needs to cover that. Kept SHORT: the legacy
+// MakeCode extension has no guard at all (instant response), and a long window
+// ate real touches made right after configuring — the "touch feels dead / much
+// worse than legacy" report. ~800ms covers the phantom without swallowing a
+// genuine early touch.
+#define TOUCH_ARM_GUARD_MS 800
 
-// Guard window (ms) after each BLE (re)connect during which ALL button/touch
-// events are suppressed. On-device the connect sequence emits a phantom click
-// burst across Button A AND the touch pads; this covers sources like Button A
-// that don't calibrate and so aren't caught by the per-pad arm guard.
-#define CONNECT_GUARD_MS 6000
+// Guard window (ms) after each (re)connect during which ALL button/touch
+// events are suppressed. Covers the connect-time phantom click burst on
+// Button A (which doesn't calibrate, so the per-pad arm guard misses it)
+// WITHOUT the multi-second global deafness the old 6s value caused.
+#define CONNECT_GUARD_MS 1200
+
+// Delay (ms) after a capacitive touch pad is armed before a ONE-SHOT
+// recalibration heals a pad that was armed while being held. codal calibrates
+// once at attach (ctor, threshold -1) taking the MAX reading over the window
+// as baseline — so a finger on the pad AT arm time poisons the baseline and
+// the pad reads not-touched forever (the "touch during config → pin dead"
+// report; inherent to codal, also present in legacy). Once, this long after
+// arm, if the pad reads RELEASED we recalibrate to capture the true untouched
+// baseline. One-shot per arm (never periodic — periodic made touch deaf for
+// seconds), and skipped while the pad reads touched (a healthy held pad is
+// never disturbed). Must be > TOUCH_ARM_GUARD_MS so the first real events flow
+// before the (brief) recalibration window.
+#define TOUCH_RECAL_DELAY_MS 1500
 
 
 // Guard window (ms) after a pin is (re)armed for edge/pulse events during which
