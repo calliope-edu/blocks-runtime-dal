@@ -88,6 +88,15 @@ enum BlocksDataContentType
 // that don't calibrate and so aren't caught by the per-pad arm guard.
 #define CONNECT_GUARD_MS 6000
 
+// How often (ms) an armed CAPACITIVE touch pad is re-calibrated while it reads
+// released. codal's TouchButton has no runtime auto-recalibration and the build
+// disables ctor auto-calibration (fixed threshold), so we drive it: a released
+// pad's baseline is re-measured periodically to track drift AND to heal a pad
+// that was armed while held (see touchRecalibAt in BlocksDevice.h). During the
+// brief codal calibration window the pad reports released, so touches are only
+// missed if one starts exactly then — hence a coarse interval, not every tick.
+#define TOUCH_RECALIB_INTERVAL_MS 4000
+
 // Guard window (ms) after a pin is (re)armed for edge/pulse events during which
 // events from that pin are suppressed. Arming flips the pull-up and arms the
 // nRF SENSE latch, which can register a spurious RISE/FALL with no real input.

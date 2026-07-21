@@ -195,7 +195,11 @@ public:
    * 
    */
 #if MICROBIT_CODAL
-  int gpioPin[11] = {0, 1, 2, 3, 8, 12, 13, 14, 15, 16, 17};
+  // Includes 9 (C9): a real analog-capable edge pad on mini v3 that the editor's
+  // pin/servo menu offers. It was previously omitted, so the isGpio() guard on
+  // SET_SERVO/SET_EVENT silently dropped C9 (servo did nothing). pullMode[] is
+  // sized from sizeof(gpioPin), so it grows to match automatically.
+  int gpioPin[12] = {0, 1, 2, 3, 8, 9, 12, 13, 14, 15, 16, 17};
 #else // NOT MICROBIT_CODAL
   // On nRF51/DAL `uBit.io.pin[17]` aliases P19 (an internal I2C/SCL line), not a
   // P17 edge pad — the mini 1/2 MicroBitIO has no P17/P18 member. Drop 17 so the
@@ -225,6 +229,19 @@ public:
   // (re)armed. Drives the TOUCH_ARM_GUARD_MS window in onButtonChanged that
   // suppresses post-arm calibration/settle phantom events (ghost touches).
   uint32_t touchArmTime[4] = {0, 0, 0, 0};
+
+  // Wall-clock (ms) of the last capacitive re-calibration of each pad. codal's
+  // TouchButton uses a per-pad baseline (threshold = measured resting reading +
+  // sensitivity) — but the build compiles a FIXED positive CAPTOUCH_DEFAULT_
+  // CALIBRATION, so the TouchButton ctor never auto-calibrates. We call
+  // touchCalibrate() explicitly at arm and then periodically while the pad
+  // reads RELEASED (updateState), which (a) replaces the useless fixed
+  // threshold with a real per-pad baseline (fixes false touches when the mini
+  // just lies on a table) and (b) heals a pad that was armed WHILE held: its
+  // first calibration captured the touched baseline, so after release it reads
+  // untouched and the next periodic recalibration captures the correct resting
+  // baseline. Codal-only; the DAL build is resistive and unaffected.
+  uint32_t touchRecalibAt[4] = {0, 0, 0, 0};
 
   // Per-pin armed edge/pulse event type (BlocksPinEventType: 0=NONE, 1=ON_EDGE,
   // 2=ON_PULSE), indexed by pin number. Retained so updateVersionData() can
