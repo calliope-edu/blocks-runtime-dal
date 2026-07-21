@@ -587,16 +587,13 @@ void BlocksDevice::onCommandReceived(uint8_t *data, size_t length) {
           if (reqMode == 1) {
             uBit.io.pin[pinIndex].isTouched(codal::TouchMode::Resistive);
           } else {
+            // Plain arm — the codal TouchButton ctor auto-calibrates once
+            // (CAPTOUCH_DEFAULT_CALIBRATION = -1, so threshold<0 → calibrate()).
+            // This is exactly the legacy MbitMore behavior. Do NOT force an
+            // extra calibration here and do NOT recalibrate periodically: codal
+            // reports NOT-touched for the whole ~0.5-1s calibration window, so
+            // repeated recalibration made touch deaf for seconds at a time.
             uBit.io.pin[pinIndex].isTouched(codal::TouchMode::Capacitative);
-            // The build compiles a FIXED positive CAPTOUCH_DEFAULT_CALIBRATION,
-            // so the TouchButton ctor never auto-calibrates and every pad shares
-            // one threshold tuned for the internal logo — the large edge pads
-            // then false-trigger (too sensitive on a table). Force a per-pad
-            // calibration now: it measures THIS pad's resting baseline (assumed
-            // untouched at arm, the normal case) and sets threshold = baseline +
-            // sensitivity. If the pad happens to be held at arm, the periodic
-            // recalibration in updateState heals it once released.
-            uBit.io.pin[pinIndex].touchCalibrate();
           }
 #else // NOT MICROBIT_CODAL
           uBit.io.pin[pinIndex].isTouched();
@@ -607,7 +604,6 @@ void BlocksDevice::onCommandReceived(uint8_t *data, size_t length) {
           // (re)armed TouchButton calibrates/settles over the next ~0.5-2s and
           // can emit a phantom DOWN/UP with no real touch.
           touchArmTime[pinIndex] = (uint32_t)system_timer_current_time();
-          touchRecalibAt[pinIndex] = touchArmTime[pinIndex];
         }
       } else {
         uBit.messageBus.ignore(
@@ -717,29 +713,6 @@ void BlocksDevice::updateState(uint8_t *data) {
   if (touchMode[3]) {
     digitalLevels = digitalLevels | (uBit.io.pin[3].isTouched() << BlocksButtonStateIndex::P3);
   }
-#if MICROBIT_CODAL
-  // Periodic per-pad recalibration of RELEASED capacitive touch pads. codal's
-  // TouchButton threshold = measured resting baseline + sensitivity, but the
-  // build disables ctor auto-calibration (fixed CAPTOUCH_DEFAULT_CALIBRATION),
-  // so we drive it: re-measure each released pad's baseline periodically. This
-  // tracks environmental drift AND heals a pad that was armed while held (its
-  // first calibration captured the touched baseline → reads released after the
-  // user lets go → this recalibration then captures the correct resting
-  // baseline and the pad senses again). Skip a pad that currently reads
-  // touched (recalibrating then would poison the baseline) and one still inside
-  // its post-arm guard window (codal is still doing its own first settle).
-  {
-    uint32_t now = (uint32_t)system_timer_current_time();
-    for (int p = 0; p <= 3; p++) {
-      if (!touchMode[p] || touchArmedMode[p] != 0) continue; // capacitive-armed only
-      if (now - touchArmTime[p] < TOUCH_ARM_GUARD_MS) continue; // still settling
-      if (now - touchRecalibAt[p] < TOUCH_RECALIB_INTERVAL_MS) continue;
-      if (uBit.io.pin[p].isTouched()) continue; // never recalibrate a held pad
-      uBit.io.pin[p].touchCalibrate();
-      touchRecalibAt[p] = now;
-    }
-  }
-#endif // MICROBIT_CODAL
   digitalLevels = digitalLevels | (uBit.buttonA.isPressed() << BlocksButtonStateIndex::A);
   digitalLevels = digitalLevels | (uBit.buttonB.isPressed() << BlocksButtonStateIndex::B);
 #if MICROBIT_CODAL

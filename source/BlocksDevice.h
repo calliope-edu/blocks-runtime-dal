@@ -230,19 +230,6 @@ public:
   // suppresses post-arm calibration/settle phantom events (ghost touches).
   uint32_t touchArmTime[4] = {0, 0, 0, 0};
 
-  // Wall-clock (ms) of the last capacitive re-calibration of each pad. codal's
-  // TouchButton uses a per-pad baseline (threshold = measured resting reading +
-  // sensitivity) — but the build compiles a FIXED positive CAPTOUCH_DEFAULT_
-  // CALIBRATION, so the TouchButton ctor never auto-calibrates. We call
-  // touchCalibrate() explicitly at arm and then periodically while the pad
-  // reads RELEASED (updateState), which (a) replaces the useless fixed
-  // threshold with a real per-pad baseline (fixes false touches when the mini
-  // just lies on a table) and (b) heals a pad that was armed WHILE held: its
-  // first calibration captured the touched baseline, so after release it reads
-  // untouched and the next periodic recalibration captures the correct resting
-  // baseline. Codal-only; the DAL build is resistive and unaffected.
-  uint32_t touchRecalibAt[4] = {0, 0, 0, 0};
-
   // Per-pin armed edge/pulse event type (BlocksPinEventType: 0=NONE, 1=ON_EDGE,
   // 2=ON_PULSE), indexed by pin number. Retained so updateVersionData() can
   // report which pins are armed for events (COMMAND data[5..7] bitmap), letting
