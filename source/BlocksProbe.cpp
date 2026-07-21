@@ -9,6 +9,10 @@ static void startBlocksProbeResponding() {
   probe->startProbeResponding();
 }
 
+static void startBlocksProbeAnnouncing() {
+  probe->startProbeAnnouncing();
+}
+
 /**
  * @brief Sum-mod-0xFF checksum — same algorithm as the serial/DAP frame codecs.
  */
@@ -40,6 +44,7 @@ BlocksProbe::BlocksProbe(BlocksDevice &_blocks) : blocks(_blocks) {
   uBit.serial.baud(115200);
 #endif // NOT MICROBIT_CODAL
   create_fiber(startBlocksProbeResponding);
+  create_fiber(startBlocksProbeAnnouncing);
 }
 
 void BlocksProbe::respond() {
@@ -104,6 +109,32 @@ void BlocksProbe::startProbeResponding() {
       // Restart the match; the mismatching byte may itself be a frame start.
       matched = (b == pattern[0]) ? 1 : 0;
     }
+  }
+}
+
+bool BlocksProbe::otherTransportActive() {
+  // A DAP mailbox host (mini 3 USB) or a BLE central is carrying detection +
+  // comms of its own — the serial announce is redundant noise then. Both are
+  // latch/state reads, no side effects.
+  if (blocks.dapConnected) return true;
+  if (blocks.moreService && blocks.moreService->isBleConnected()) return true;
+  return false;
+}
+
+void BlocksProbe::startProbeAnnouncing() {
+  // Let startProbeResponding() size the serial rings first (it runs in the
+  // sibling fiber created just before this one).
+  fiber_sleep(250);
+  while (true) {
+    // Unconditional 1 Hz version broadcast — the send path stays alive even
+    // when the RX path has gone deaf, so a host detects us on connect/reload
+    // without the device having to hear anything (no reset needed). Skip only
+    // while DAP/BLE is active (redundant + would add serial noise); resumes if
+    // that session drops.
+    if (!otherTransportActive()) {
+      respond();
+    }
+    fiber_sleep(1000);
   }
 }
 
